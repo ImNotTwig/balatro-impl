@@ -34,6 +34,63 @@ pub const HandTypes = enum {
     OtherOak, // 6+ cards with the same rank
 };
 
+pub fn containsStraight(crdList: []Card, all: std.mem.Allocator) !bool {
+    // if the hand played is less than 5 cards, its not possible to be a straight
+    if (crdList.len < 5) return false;
+
+    var ranksInHand = std.AutoHashMap(Rank, struct { amountInHand: i32, indexes: std.ArrayList(usize) }).init(all);
+    defer ranksInHand.deinit();
+    defer {
+        var iterator = ranksInHand.iterator();
+        while (iterator.next()) |i| {
+            i.value_ptr.indexes.deinit();
+        }
+    }
+
+    for (0.., crdList) |i, v| {
+        var val = try ranksInHand.getOrPut(v.rank);
+        if (val.found_existing) {
+            val.value_ptr.amountInHand += 1;
+        } else {
+            val.value_ptr.amountInHand = 1;
+            val.value_ptr.indexes = std.ArrayList(usize).init(all);
+        }
+        try val.value_ptr.indexes.append(i);
+    }
+
+    // after taking all the duplicates out of the played hand, check if there is a valid straight
+    // (a straight physically cannot contain two of the same card, except aces, in the case of a doubleStraight)
+    var iterator = ranksInHand.iterator();
+    var tmpCrdList = std.ArrayList(Card).init(all);
+    defer tmpCrdList.deinit();
+
+    while (iterator.next()) |i| {
+        try tmpCrdList.append(crdList[i.value_ptr.indexes.items[0]]);
+    }
+    if (tmpCrdList.items.len < 5) return false;
+
+    const newCrdList = try tmpCrdList.toOwnedSlice();
+    defer all.free(newCrdList);
+
+    // sort the list of cards by rank value
+    std.mem.sort(Card, newCrdList, {}, struct {
+        pub fn inner(_: void, a: Card, b: Card) bool {
+            return getRankValue(a) < getRankValue(b);
+        }
+    }.inner);
+
+    for (0.., newCrdList) |i, _| {
+        if (newCrdList.len <= i + 1) break;
+        if (getRankValue(newCrdList[i]) + 1 != getRankValue(newCrdList[i + 1])) {
+            if (newCrdList[0].rank != Rank.Two and newCrdList[i + 1].rank != Rank.Ace) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 pub const Edition = enum {
     None,
     Foil,
@@ -80,8 +137,10 @@ pub const Card = struct {
 
 pub fn getRankValue(crd: Card) i32 {
     return (switch (crd.rank) {
-        .Ace => 11,
-        .King, .Queen, .Jack => 10,
+        .Ace => 14,
+        .King => 13,
+        .Queen => 12,
+        .Jack => 11,
         else => @intFromEnum(crd.rank) + 1,
     });
 }
